@@ -1,0 +1,104 @@
+---
+title: "NYPD Incidents Project"
+date: "2025-06-15"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# My Goal:
+In this project, I want to explore where the most shootings are occurring in New York. To do this I will be using the Historic NYPD Shooting incidents data set {https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic}. I plan to look at which borough has the most shootings in total, the most lethal shootings, and also model lethal shooting rates between boroughs to see if there is a significant difference.
+
+## Packages Required
+In order to run this analysis, the "EMMEANS" and "TIDYVERSE" packages must be installed. If you do not have these packages installed, then the further analysis won't populate.
+
+\ **Please run: install.packages('emmeans') & install.packages('tidyverse') if having trouble knitting the document.**
+
+
+```{r Loading Packages, message = FALSE, warning = FALSE}
+# Loading in the packages needed for this analysis
+library(tidyverse)
+library(emmeans)
+```
+
+# Preparing the Data
+I will begin by loading in my data.
+
+```{r Loading Data}
+data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+Next, I will be removing the columns I won't need for my analysis, and I will sum total and lethal shootings across each borough.
+
+```{r Tidy Data}
+# Creating data set with total number of shootings per borough
+shootings <- data %>% 
+  select(BORO) %>% # selecting only the borough column
+  group_by(BORO) %>% 
+  count() %>% # summing total shootings
+  rename(c(Borough = BORO, Shootings = n)) # renaming columns
+
+
+# Creating data set with lethal and non-lethal number of shootings per borough
+lethal_shootings <- data %>% 
+  select(BORO, STATISTICAL_MURDER_FLAG) %>% # selecting borough & lethal indicator
+  group_by(BORO, STATISTICAL_MURDER_FLAG) %>% 
+  count() %>% # summing total lethal and non-lethal shootings
+  rename(c(Borough = BORO, Lethal = STATISTICAL_MURDER_FLAG, Shootings = n)) # renaming
+```
+
+# Visualizing the Data
+Then, I will use these data sets to create two visualizations. The first showing total shootings per borough, and the second showing the lethal versus non-lethal shooting numbers per borough.
+
+```{r Visualizing Total Shootings per Borough}
+shootings %>% 
+  ggplot(aes(x = Borough, y = Shootings, fill = Borough)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = "Borough", y = "Total Historic Shootings", 
+       title = "Total Historic Shootings per Borough in New York", 
+       subtitle = "As Reported by the NYPD")
+```
+From this, we can see that Brooklyn is the borough with the most shootings historically, and Staten Island is the one with the least. Next, we'll examine lethal versus non-lethal shooting numbers across the boroughs.
+
+```{r Visualizing Lethal Shootings per Borough}
+lethal_shootings %>% 
+  ggplot(aes(fill = Lethal, x = Borough, y = Shootings)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  theme_bw() +
+  labs(x = "Borough", y = "Total Historic Shootings", 
+       title = "Total Historic Lethal and Non-Lethal Shootings per Borough in New York", 
+       subtitle = "As Reported by the NYPD")
+```
+
+This visualization shows the same pattern as above. Brooklyn is the borough with historically the most lethal shootings, and Staten Island has the least.
+
+# Modeling
+Now, I want to see if the lethal shooting rates are significantly different across the five boroughs. To do that I will be running a logistic regression model and then running pairwise tests for each borough combination.
+
+```{r Modeling}
+# changing this variable to be 1s and 0s instead of Booleans
+data$STATISTICAL_MURDER_FLAG <- as.integer(as.logical(data$STATISTICAL_MURDER_FLAG)) 
+
+# logistical regression model
+mod <- glm(STATISTICAL_MURDER_FLAG ~ BORO, data = data, family = binomial) 
+summary(mod)
+```
+
+This model summary is only showing the comparison of each borough back to the Bronx (chosen because it is first alphabetically). However, these results are showing that there is a significant difference between lethal shooting rates in Manhattan, when compared to lethal shooting rates from Bronx. I want to further check this relationship and run all the other pairwise tests for each pairing of boroughs. To do this, I will be using the "EMMEANS" package.
+
+```{r}
+emmeans(mod, specs=pairwise~BORO)$contrasts # running all pairwise tests
+```
+
+The "EMMEANS" analysis shows instead that there is no significant difference in lethal shooting rates between any of the boroughs, not even between the Bronx and Manhattan. This p-value has changed because the "EMMEANS" package will account for the total number of tests that are being run, and will inflate p-values to ensure that our Type 1 error rate stays low, reducing the chance of showing a false positive result. This false positive result is what was being reported by the original logistic regression model. 
+
+# Conclusion
+From this project, we learned that Brooklyn is the borough with the highest total number of shootings and highest lethal number of shootings historically. We also found that Staten Island is the borough with the lowest number of both total shootings and lethal shootings historically. Additionally, this analysis found no significant difference in lethal shooting rates between the boroughs. However, in running my analysis, I never accounted for population size of these boroughs. An interesting next step for this project could be to run the same analysis with population size take into consideration to see if these results hold. 
+
+In planning for this project, I chose not to work with the racial data for the shooting victims or perpetrators, since historically, there has been racial biases present within police data or encounters. I wanted to avoid this potential source of bias, but further analysis of this data could look at racial difference in lethal shooting rates across the  boroughs, again taking into account the populations and racial make-ups for the area.
