@@ -1,0 +1,186 @@
+---
+title: "How COVID-19 Death Rates Changed Over Time"
+author: "Zoe Lowe"
+date: "2025-05-18"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# My Goal:
+I want to explore how COVID-19 death rates changed from early 2020 and onward in the United States. To do this I will be using COVID-19 case and death data from the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University {https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series}. I will be focusing on the 10 states/regions with the highest death per case rates. I predict that we will see the death numbers begin to flatten out in 2021, because it was around this time that the vaccine was introduced. I also want to explore if the number of deaths can be predicted given the number of cases.
+
+# Preparing the Data
+
+To start, I must load in my data which is captured within two CSV files. Then I will do a preliminary check to understand the form that this data is in.
+
+```{r Loading Packages, echo = FALSE, message = FALSE}
+library(tidyverse)
+```
+
+```{r Loading Data Part 1}
+US_cases <- read.csv(url("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"), check.names = FALSE)
+```
+
+```{r Loading Data Part 2}
+US_deaths <- read.csv(url("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"), check.names = FALSE)
+
+head(US_cases, n = c(6, 7)) # checking the data format
+head(US_deaths, n = c(6,7))
+```
+
+After previewing both data sets, I will need to tidy them up to get them to a place where I can run my analysis. Firstly, I will pivot the data so that the dates are contained within one column and each date is associated with a total number of cases for the given location. Then, I will fix the date column so it is recognized as a date object. Finally, I will remove the columns I do not plan to use and set the remaining variable names to be more R friendly.
+
+```{r Tidying US_cases, message=FALSE}
+US_cases <- US_cases %>% 
+  pivot_longer(cols = -(UID:Combined_Key), # pivoting only the date columns
+               names_to = "Date",        # naming the two columns created by the pivot
+               values_to = "Cases") %>%
+  mutate(Date = mdy(Date)) %>% # changing the dates to a date object
+  select(c('Province_State', 'Date', 'Cases')) %>% # selecting the columns I want
+  rename_at('Province_State', ~'State') # renaming the double named columns
+
+head(US_cases, n = 8)
+```
+
+Then I will do the same with the US_Deaths data set.
+
+```{r Tidying US_deaths, message=FALSE}
+US_deaths <- US_deaths %>% 
+  pivot_longer(cols = -(UID:Population), # pivoting only the date columns
+               names_to = "Date",        # naming the two columns created by the pivot
+               values_to = "Deaths") %>%
+  mutate(Date = mdy(Date)) %>% # changing the dates to a date object
+  select(c('Province_State', 'Date', 'Deaths')) %>% # selecting the columns I want
+  rename_at('Province_State', ~'State') # renaming the double named columns
+
+head(US_deaths, n = 8)
+```
+
+Finally, I will join together the cleaned US cases and deaths data sets into a final US set with the variables State, Date, Cases, & Deaths. Then I will calculate some basic summary statistics on the Date, Cases, & Deaths variables.
+
+```{r Creating the US dataset, message=FALSE}
+US <- US_cases %>% 
+  full_join(US_deaths, relationship = 'many-to-many')# combining cases and deaths
+
+US <- US %>% 
+  group_by(State, Date) %>% 
+  summarise(across(c(Cases, Deaths), sum))
+
+head(US, n = 8)
+summary(US[c('Date', 'Cases', 'Deaths')]) # calculated summary stats for these columns
+```
+
+From these summary statistics, we can better understand the wide range of COVID-19 case and death numbers. My next step is to calculate the deaths per case rate for each state/region and then filter down to the 10 with the highest rates.
+
+```{r Filtering Top 10 States, message=FALSE}
+US_by_state <- US %>% # summing the number of cases and deaths per state
+  group_by(State, Date) %>% 
+  summarise(Cases = sum(Cases), Deaths = sum(Deaths)) %>%
+  ungroup()
+
+US_by_state <- US_by_state %>% 
+  mutate(Deaths_Per_Case = Deaths / Cases) # calculating deaths per case
+
+US_by_state$Deaths_Per_Case[is.na(US_by_state$Deaths_Per_Case)] <- 0 # handling end cases that do not make sense
+US_by_state$Deaths_Per_Case[is.infinite(US_by_state$Deaths_Per_Case)] <- 0 
+
+US_by_state <- US_by_state %>%
+  group_by(State) %>%
+  summarise(across(c(Deaths_Per_Case), max)) # finding the maximum deaths per case for each state
+
+US_by_state <- US_by_state[order(-US_by_state$Deaths_Per_Case), ]
+
+top10_US <- head(US_by_state, n = 10) # Pulling the top 10 states / regions
+top10_US <- as.list(top10_US$State)
+
+US_10 <- US %>% # creating a data frame filter to be only the top 10 states / regions
+  filter(State %in% top10_US)
+
+unique(US_10$State) # showing the list of the 10 states / regions chosen
+```
+
+# Visualizing the Data
+
+Next, I will visualize the death numbers over time for these 10 states/regions.
+
+```{r US total deaths viz, message=FALSE, warning=FALSE}
+totals <- US_10 %>% 
+  group_by(State, Date) %>% 
+  summarise(Cases = sum(Cases), Deaths = sum(Deaths)) %>%
+  ungroup()
+
+totals %>% 
+  filter(Cases > 0) %>% 
+  ggplot(aes(x = Date, y = Deaths, colour = State)) +
+  geom_point() +
+  theme_bw() +
+  labs(title = "COVID19 Deaths from 2020-2023", subtitle = "For the 10 states/regions with the highest death per case rate",
+       x = "Date", y = "Number of Deaths") 
+```
+
+From this, we can see that death counts do not all begin to flatten out around 2021, as I had predicted. Instead, we see that the majority of these states/regions, their death numbers do not begin to flatten out until 2022. 
+
+To further explore this idea, I wanted to look at the relationship between the death per cases rate and time. I would expect that the deaths per case would stay relatively high through 2022, possibly being correlated with the high death numbers at that time.
+
+```{r US total deaths per case viz, message=FALSE, warning=FALSE}
+totals <- totals %>% 
+  mutate(Deaths_Per_Case = Deaths / Cases) # calculating deaths per case
+
+totals$Deaths_Per_Case[is.na(totals$Deaths_Per_Case)] <- 0 # handling end cases that do not make sense
+totals$Deaths_Per_Case[is.infinite(totals$Deaths_Per_Case)] <- 0
+
+totals %>% 
+  filter(Cases > 0) %>% 
+  ggplot(aes(x = Date, y = Deaths_Per_Case, colour = State)) +
+  geom_point() +
+  theme_bw() +
+  labs(title = "COVID19 Deaths per Case Rate from 2020-2023", subtitle = "For the 10 states/regions with the highest death per case rate",
+       x = "Date", y = "Deaths per Case") 
+```
+
+After having explored the patterns of US death numbers and death per case rates over time, I now want to explore the predictive ability case number has for death numbers.
+
+# Modeling
+Here I build a model that relates case numbers to death numbers linearly.
+
+```{r}
+mod <- lm(Deaths ~ Cases, data = totals)
+summary(mod)
+```
+
+From this model, we can write out the predictive linear equation.
+
+$$
+\text{Deaths} = 81160 + 0.01253 \cdot \text{Cases}
+$$
+
+And we can say that using case number as a predictor can explain about 96% ($R^2 = 0.9616$) of the variability seen in death numbers in the US.
+
+Next, I want to compare the model predictions with the actual observed values.
+
+```{r Actual vs Prediction Viz}
+totals_with_prediction <- totals %>% 
+  mutate(Prediction = predict(mod))
+
+totals_with_prediction %>% 
+  ggplot() +
+  geom_point(aes(x = Cases, y = Deaths, color = 'Actual'))+
+  geom_point(aes(x = Cases, y = Prediction, color = 'Predicted')) +
+  scale_color_manual(name = "Death Values",
+                     breaks = c('Actual', 'Predicted'),
+                     values = c('Actual' = 'blue', 'Predicted' = 'red')) +
+  theme_bw() +
+  labs(title = "COVID19 Actual vs Predicted Deaths by Case", subtitle = "2020 - 2023",
+       x = "Cases", y = "Deaths")
+```
+From this graph, we can see that the prediction line generally follows the same pattern as the observed values.
+
+# Conclusion
+At the beginning of this project I had predicted that COVID-19 death rates in the US would flatten out around 2021, potentially correlated with the date the vaccine was widely introduced. However, I instead found that US death numbers did not flatten out until 2022. These death numbers could be predicted relatively well by given case numbers in the US.I believe the biggest source of bias in this project was the data sets' limited date range. The CSSE at Johns Hopkins University stopped collecting COVID-19 data in 2023, so exploring how these patterns change with the inclusion of 2024 and 2025 is the next place I would expand this research. It would also be interesting to replicate this analysis with differing numbers of states/regions.
+
